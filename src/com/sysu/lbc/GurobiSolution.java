@@ -7,16 +7,13 @@ import com.sysu.lbc.dataStructure.Workflow;
 import com.sysu.lbc.tool.Tool;
 import com.sysu.lbc.tool.WorkflowGenerator;
 import gurobi.*;
-import org.junit.Assert;
-import org.junit.Test;
 
-import javax.print.attribute.standard.PresentationDirection;
 import java.util.*;
 
 public class GurobiSolution {
-    static final String PATH_INFO_FILE = "data/pathInfo.txt";
+    static final String PATH_INFO_FILE = "data/pathInfo2.txt";
     static final String NODE_INFO_FILE = "data/info_of_nodes.txt";
-    static final String LINKS_INFO_FILE = "data/info_cap_links.txt";
+    static final String LINKS_INFO_FILE = "data/info_cap_links2.txt";
     static final String GUROBI_LOG_NAME = "solution.log";
 
     List<Workflow> workflows = new ArrayList<>();
@@ -26,8 +23,6 @@ public class GurobiSolution {
 
     Map<String, GRBVar> xVars = new HashMap<>();    //<w_s_v, var>
     Map<String, GRBVar> yVars = new HashMap<>();    //<w_p_s_s', var>
-    List<GRBLinExpr> linkLoad = new ArrayList<>();    //bandwidth usage information of each one hop link
-    List<GRBLinExpr> nodeLoad = new ArrayList<>(); // capacity usage information of each node
 
     GRBEnv env;
     GRBModel model;
@@ -56,7 +51,6 @@ public class GurobiSolution {
     }
 
 
-    // todo
     private void setObjective() throws GRBException {
         double throughput = prepareThroughput();
         GRBQuadExpr nodeLoadInfo = prepareExprNode();
@@ -168,11 +162,12 @@ public class GurobiSolution {
     }
 
     private GRBQuadExpr getSumCost(Map<String, List<CostItem>> costItems) throws GRBException {
-        List<GRBQuadExpr> resultItems = new ArrayList<>();
-        int i = 1;
+        GRBQuadExpr result = new GRBQuadExpr();
+        int count1 = 0;
         for (Map.Entry<String, List<CostItem>> linkCostItems : costItems.entrySet()) {
-            System.out.println(i++ + " " + linkCostItems.getKey());
+            count1++;
             List<CostItem> itemList = linkCostItems.getValue();
+            int count2 = 1;
             for (CostItem item1 : itemList) {
                 for (CostItem item2 : itemList) {
                     double offerResource = item1.getOfferResource();
@@ -183,14 +178,15 @@ public class GurobiSolution {
                     GRBVar var2 = item2.getVar();
                     GRBQuadExpr expr = new GRBQuadExpr();
                     expr.addTerm(coeff, var1, var2);
-                    resultItems.add(expr);
+                    result.add(expr);
+                    System.out.println(count1 + ": " + count2++);
                 }
             }
         }
-        GRBQuadExpr result = new GRBQuadExpr();
-        for (GRBQuadExpr exprItem : resultItems) {
-            result.add(exprItem);
-        }
+//        GRBQuadExpr result = new GRBQuadExpr();
+//        for (GRBQuadExpr exprItem : resultItems) {
+//            result.add(exprItem);
+//        }
 
         return result;
     }
@@ -420,78 +416,6 @@ public class GurobiSolution {
         Workflow wf3 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
         workflows.add(wf1);
         workflows.add(wf2);
-        workflows.add(wf3);
+//        workflows.add(wf3);
     }
-
-    @Test
-    public void generateWorkflowTest() {
-        GurobiSolution solution = new GurobiSolution();
-        solution.prepareWorkflows();
-        System.out.println(workflows.get(0).getTasks().size());
-        Assert.assertNotEquals(0, workflows.size());
-    }
-
-
-    @Test
-    public void preparePathsTest() {
-        GurobiSolution solution = new GurobiSolution();
-        solution.preparePaths();
-        Assert.assertNotNull(solution.paths);
-        Assert.assertNotEquals(0, solution.paths.size());
-    }
-
-    @Test
-    public void prepareNodesTest() {
-        GurobiSolution solution = new GurobiSolution();
-        solution.prepareNodes();
-        Assert.assertNotEquals(0, nodes);
-    }
-
-    @Test
-    public void prepareOneHopLinksTest() {
-        GurobiSolution solution = new GurobiSolution();
-        solution.prepareOneHopLinks();
-        Assert.assertNotEquals(0, oneHopLinks);
-    }
-
-    @Test
-    public void gurobiVarTest() {
-        try {
-            GRBEnv env = new GRBEnv("test.log");
-            GRBModel model = new GRBModel(env);
-            GRBVar x = model.addVar(1.0, 1.0, 0.0, GRB.INTEGER, "x");
-            model.update();
-            model.optimize();
-            GRBVar x1 = model.getVarByName("x");
-            System.out.println("laaaaaaaaaaa");
-            System.out.println(x.get(GRB.DoubleAttr.X));
-            Assert.assertTrue(x1 == x);
-        } catch (GRBException e) {
-            e.printStackTrace();
-        }
-    }
-
-    @Test
-    public void gurobiSolutionTest() throws GRBException {
-        GurobiSolution solution = new GurobiSolution();
-        solution.prepare();
-    }
-
-    @Test
-    public void isPathContainOneHopLinkTest() {
-        GurobiSolution solution = new GurobiSolution();
-        String pathContent = "1>2>3>4>5";
-        String oneHopLinkId = "2_3";
-        boolean result = solution.isPathContainOneHopLink(pathContent, oneHopLinkId);
-        Assert.assertTrue(result);
-
-        oneHopLinkId = "4_3";
-        result = solution.isPathContainOneHopLink(pathContent, oneHopLinkId);
-        Assert.assertTrue(result);
-
-        oneHopLinkId = "3_9";
-        result = solution.isPathContainOneHopLink(pathContent, oneHopLinkId);
-        Assert.assertFalse(result);
-    }
-
 }

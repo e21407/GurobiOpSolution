@@ -6,13 +6,10 @@ Node_u	3	Node_v	4	-Cap	50
 Node_u	3	Node_v	5	-Cap	50
 Node_u	3	Node_v	6	-Cap	50
 Node_u	4	Node_v	7	-Cap	50
-Node_u	5	Node_v	6	-Cap	50
 Node_u	6	Node_v	7	-Cap	50
-Node_u	6	Node_v	9	-Cap	100
+Node_u	6	Node_v	8	-Cap	100
+Node_u	7	Node_v	8	-Cap	100
 Node_u	7	Node_v	9	-Cap	100
-Node_u	7	Node_v	10	-Cap	100
 Node_u	8	Node_v	9	-Cap	100
-Node_u	8	Node_v	11	-Cap	150
+Node_u	8	Node_v	10	-Cap	150
 Node_u	9	Node_v	10	-Cap	100
-Node_u	9	Node_v	11	-Cap	150
-Node_u	10	Node_v	11	-Cap	150
