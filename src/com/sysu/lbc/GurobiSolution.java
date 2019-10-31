@@ -1,0 +1,497 @@
+package com.sysu.lbc;
+
+import com.sysu.lbc.dataStructure.CostItem;
+import com.sysu.lbc.dataStructure.Flow;
+import com.sysu.lbc.dataStructure.Task;
+import com.sysu.lbc.dataStructure.Workflow;
+import com.sysu.lbc.tool.Tool;
+import com.sysu.lbc.tool.WorkflowGenerator;
+import gurobi.*;
+import org.junit.Assert;
+import org.junit.Test;
+
+import javax.print.attribute.standard.PresentationDirection;
+import java.util.*;
+
+public class GurobiSolution {
+    static final String PATH_INFO_FILE = "data/pathInfo.txt";
+    static final String NODE_INFO_FILE = "data/info_of_nodes.txt";
+    static final String LINKS_INFO_FILE = "data/info_cap_links.txt";
+    static final String GUROBI_LOG_NAME = "solution.log";
+
+    List<Workflow> workflows = new ArrayList<>();
+    Map<Integer, String> paths = new HashMap<>();   //<pathId, pathContent>, such as <1, 1>2>3 >
+    Map<Integer, Double> nodes = new HashMap<>();  //<nodeId, nodeCapacity>
+    Map<String, Double> oneHopLinks = new HashMap<>(); //<oneHopLink, bandwidth>, such as <1_2, 50>
+
+    Map<String, GRBVar> xVars = new HashMap<>();    //<w_s_v, var>
+    Map<String, GRBVar> yVars = new HashMap<>();    //<w_p_s_s', var>
+    List<GRBLinExpr> linkLoad = new ArrayList<>();    //bandwidth usage information of each one hop link
+    List<GRBLinExpr> nodeLoad = new ArrayList<>(); // capacity usage information of each node
+
+    GRBEnv env;
+    GRBModel model;
+
+    public void prepare() throws GRBException {
+        long starTime = System.currentTimeMillis();
+        env = new GRBEnv(GUROBI_LOG_NAME);
+        model = new GRBModel(env);
+        prepareWorkflows();
+        prepareNodes();
+        preparePaths();
+        prepareOneHopLinks();
+        prepareXVar();
+        prepareYVar();
+        prepareConstraint();
+        setObjective();
+        long endTime = System.currentTimeMillis();
+        long dur = endTime - starTime;
+        System.out.println("准备耗时：" + (dur / 1000) + "s");
+
+    }
+
+    public void doOptimize() throws GRBException {
+        model.update();
+        model.optimize();
+    }
+
+
+    // todo
+    private void setObjective() throws GRBException {
+        double throughput = prepareThroughput();
+        GRBQuadExpr nodeLoadInfo = prepareExprNode();
+        GRBQuadExpr linkLoadInfo = prepareExprLink();
+        GRBQuadExpr objective = new GRBQuadExpr();
+
+        objective.addConstant(throughput);
+        objective.add(nodeLoadInfo);
+        objective.add(linkLoadInfo);
+
+        model.setObjective(objective, GRB.MAXIMIZE);
+        model.update();
+    }
+
+    // 计算吞吐量
+    private double prepareThroughput() {
+        double throughput = 0.0;
+        for (Workflow wf : workflows) {
+            ArrayList<Flow> flows = wf.getFlows();
+            for (Flow f : flows) {
+                throughput += f.getNeededBandwidth();
+            }
+        }
+        return throughput;
+    }
+
+    // 检查并记录节点上的工作负载情况
+    private GRBQuadExpr prepareExprNode() throws GRBException {
+        Map<String, List<CostItem>> costItems = new HashMap<>();
+        for (Map.Entry<Integer, Double> nodeEntry : nodes.entrySet()) {
+            Integer nodeId = nodeEntry.getKey();
+            Double capacity = nodeEntry.getValue();
+            for (Map.Entry<String, GRBVar> xVarEntry : xVars.entrySet()) {
+                String[] xVarKeyItems = xVarEntry.getKey().split("_");
+                int assignNodeId = Integer.parseInt(xVarKeyItems[2]);
+                if (nodeId != assignNodeId) {
+                    continue;
+                }
+                int wfId = Integer.parseInt(xVarKeyItems[0]);
+                int taskId = Integer.parseInt(xVarKeyItems[1]);
+                Task task = getTaskFormWorkFlows(wfId, taskId);
+                Double neededResource = task.getNeededResource();
+
+//                GRBLinExpr exper = new GRBLinExpr();
+//                double coeff = -1 * Math.pow(neededResource, 2) / Math.pow(capacity, 2);
+//                GRBVar xVar = xVarEntry.getValue();
+//                exper.addTerm(coeff, xVar);
+//                nodeLoad.add(exper);
+                String nodeIdStr = String.valueOf(nodeId);
+                List<CostItem> linkCostItem = costItems.get(nodeIdStr);
+                if (null == linkCostItem) {
+                    linkCostItem = new ArrayList<>();
+                    costItems.put(nodeIdStr, linkCostItem);
+                }
+                linkCostItem.add(new CostItem(xVarEntry.getValue(), neededResource, capacity));
+
+            }
+        }
+//        GRBLinExpr result = new GRBLinExpr();
+//        for (GRBLinExpr expr : nodeLoad) {
+//            result.add(expr);
+//        }
+//        return result;
+        return getSumCost(costItems);
+    }
+
+
+    // 检查并记录每段one-hop link上的链路负载情况
+    private GRBQuadExpr prepareExprLink() throws GRBException {
+        Map<String, List<CostItem>> costItems = new HashMap<>();
+        for (Map.Entry<String, Double> oneHopLinkEntry : oneHopLinks.entrySet()) {
+            String linkId = oneHopLinkEntry.getKey();
+            double bandwidthCapacity = oneHopLinkEntry.getValue();
+            for (Map.Entry<String, GRBVar> yVarEntry : yVars.entrySet()) {
+                String[] yVarKeyItem = yVarEntry.getKey().split("_");
+                int pathId = Integer.valueOf(yVarKeyItem[1]);
+                String pathContent = paths.get(pathId);
+                if (!isPathContainOneHopLink(pathContent, linkId)) {
+                    continue;
+                }
+                int wfId = Integer.parseInt(yVarKeyItem[0]);
+                int currTaskId = Integer.parseInt(yVarKeyItem[2]);
+                int succTaskId = Integer.parseInt(yVarKeyItem[3]);
+                Flow flow = getFlowFromWorkflows(wfId, currTaskId, succTaskId);
+                double neededBandwidth = flow.getNeededBandwidth();
+
+                List<CostItem> linkCostItem = costItems.get(linkId);
+                if (null == linkCostItem) {
+                    linkCostItem = new ArrayList<>();
+                    costItems.put(linkId, linkCostItem);
+                }
+                linkCostItem.add(new CostItem(yVarEntry.getValue(), neededBandwidth, bandwidthCapacity));
+
+//                GRBLinExpr exper = new GRBLinExpr();
+//                double coeff = -1 * Math.pow(neededBandwidth, 2) / Math.pow(bandwidthCapacity, 2);
+//                GRBVar yVar = yVarEntry.getValue();
+//                exper.addTerm(coeff, yVar);
+//                linkLoad.add(exper);
+            }
+        }
+        // 计算每段link上的代价
+//        GRBLinExpr result = new GRBLinExpr();
+//        for (GRBLinExpr expr : linkLoad) {
+//            result.add(expr);
+//        }
+//        return result;
+
+        return getSumCost(costItems);
+    }
+
+    private GRBQuadExpr getSumCost(Map<String, List<CostItem>> costItems) throws GRBException {
+        List<GRBQuadExpr> resultItems = new ArrayList<>();
+        int i = 1;
+        for (Map.Entry<String, List<CostItem>> linkCostItems : costItems.entrySet()) {
+            System.out.println(i++ + " " + linkCostItems.getKey());
+            List<CostItem> itemList = linkCostItems.getValue();
+            for (CostItem item1 : itemList) {
+                for (CostItem item2 : itemList) {
+                    double offerResource = item1.getOfferResource();
+                    double needResource1 = item1.getNeedResource();
+                    double needResource2 = item2.getNeedResource();
+                    double coeff = -1 * needResource1 * needResource2 / Math.pow(offerResource, 2);
+                    GRBVar var1 = item1.getVar();
+                    GRBVar var2 = item2.getVar();
+                    GRBQuadExpr expr = new GRBQuadExpr();
+                    expr.addTerm(coeff, var1, var2);
+                    resultItems.add(expr);
+                }
+            }
+        }
+        GRBQuadExpr result = new GRBQuadExpr();
+        for (GRBQuadExpr exprItem : resultItems) {
+            result.add(exprItem);
+        }
+
+        return result;
+    }
+
+    private Task getTaskFormWorkFlows(int wfId, int taskId) {
+        for (Workflow wf : workflows) {
+            if (wfId != wf.getWF_ID()) {
+                continue;
+            }
+            Set<Task> tasks = wf.getTasks();
+            for (Task task : tasks) {
+                if (taskId == task.getTaskId()) {
+                    return task;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Flow getFlowFromWorkflows(int wfId, int currTaskId, int succTaskId) {
+        Flow result = null;
+        for (Workflow wf : workflows) {
+            if (wfId != wf.getWF_ID()) {
+                continue;
+            }
+            ArrayList<Flow> flows = wf.getFlows();
+            for (Flow flow : flows) {
+                if (currTaskId == flow.getCurrTask().getTaskId() && succTaskId == flow.getSuccTask().getTaskId()) {
+                    return flow;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isPathContainOneHopLink(String pathContent, String oneHopLinkKey) {
+        String[] pathNodes = pathContent.split(">");
+        String[] oneHopLinkNodes = oneHopLinkKey.split("_");
+        String nodeU = oneHopLinkNodes[0];
+        String nodeV = oneHopLinkNodes[1];
+        for (int i = 0; i <= pathNodes.length - 2; i++) {
+            String pathNodeU = pathNodes[i];
+            String pathNodeV = pathNodes[i + 1];
+            if (nodeU.equals(pathNodeU) && nodeV.equals(pathNodeV) || nodeV.equals(pathNodeU) && nodeU.equals(pathNodeV)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    private void prepareConstraint() throws GRBException {
+        // 每个任务只能放置在一个节点上
+        addAssignmentConstraint(groupXVar(xVars));
+        // 每个任务对只能采用一条通讯路径
+//        addAssignmentConstraint(groupYVar(yVars));
+        // y^{w,p}_{s,s'} == x^w_{s,v} * x^w_{s',v}
+        addLinkNodeConstraint();
+    }
+
+    // todo test
+    private void addLinkNodeConstraint() throws GRBException {
+        for (Map.Entry<String, GRBVar> yVarEntry : yVars.entrySet()) {
+            String[] yVarKeyItems = yVarEntry.getKey().split("_");
+            Integer pathId = Integer.valueOf(yVarKeyItems[1]);
+            String pathContent = paths.get(pathId);
+            String[] pathNodes = pathContent.split(">");
+            String currTaskNodeId = pathNodes[0];
+            String succTaskNodeId = pathNodes[pathNodes.length - 1];
+            String currXVarKey = yVarKeyItems[0] + "_" + yVarKeyItems[2] + "_" + currTaskNodeId;
+            String succXVarKey = yVarKeyItems[0] + "_" + yVarKeyItems[3] + "_" + succTaskNodeId;
+            GRBVar currXVar = xVars.get(currXVarKey);
+            GRBVar succXVar = xVars.get(succXVarKey);
+
+            if (null == currXVar || null == succXVar) {
+                continue;
+            }
+            GRBQuadExpr exper = new GRBQuadExpr();
+            exper.addTerm(1.0, yVarEntry.getValue());
+            exper.addTerm(-1.0, currXVar, succXVar);
+            model.addQConstr(exper, GRB.EQUAL, 0.0, yVarEntry.getKey());
+        }
+    }
+
+    private void addAssignmentConstraint(Map<String, List<GRBVar>> varMap) throws GRBException {
+        Map<String, List<GRBVar>> groupedVar = varMap;
+        for (Map.Entry<String, List<GRBVar>> varsEntry : groupedVar.entrySet()) {
+            List<GRBVar> vars = varsEntry.getValue();
+            GRBLinExpr exper = new GRBLinExpr();
+            for (GRBVar var : vars) {
+                exper.addTerm(1.0, var);
+            }
+            model.addConstr(exper, GRB.EQUAL, 1.0, varsEntry.getKey());
+        }
+    }
+
+    // 将变量y^{w,p}_{s,s'}按w_s_s'进行分类
+    private Map<String, List<GRBVar>> groupYVar(Map<String, GRBVar> xVars) {
+        Map<String, List<GRBVar>> result = new HashMap<>();
+        for (Map.Entry<String, GRBVar> varEntry : yVars.entrySet()) {
+            String varName = varEntry.getKey();
+            String[] s = varName.split("_");
+            String varNameIndex = s[0] + "_" + s[2] + "_" + s[3];
+            List<GRBVar> vars = result.get(varNameIndex);
+            if (null == vars) {
+                vars = new ArrayList<>();
+                result.put(varNameIndex, vars);
+            }
+            vars.add(varEntry.getValue());
+        }
+        return result;
+    }
+
+    // 将变量x^w_{s,v}按w_s进行分类
+    private Map<String, List<GRBVar>> groupXVar(Map<String, GRBVar> xVars) {
+        Map<String, List<GRBVar>> result = new HashMap<>();
+        for (Map.Entry<String, GRBVar> varEntry : xVars.entrySet()) {
+            String varName = varEntry.getKey();
+            String[] s = varName.split("_");
+            String varNameIndex = s[0] + "_" + s[1];
+            List<GRBVar> vars = result.get(varNameIndex);
+            if (null == vars) {
+                vars = new ArrayList<>();
+                result.put(varNameIndex, vars);
+            }
+            vars.add(varEntry.getValue());
+
+        }
+        return result;
+    }
+
+    // 变量x^w_{s,v},属于工作流w的任务s是否放置在节点v上，
+    // 变量的名称用"w_s_v"表示，
+    // 起始任务分配节点固定；
+    private void prepareXVar() throws GRBException {
+        for (Workflow wf : workflows) {
+            Integer wfId = wf.getWF_ID();
+            Set<Task> tasks = wf.getTasks();
+            for (Task task : tasks) {
+                //对于起始任务分配到特殊的无人机节点上
+                Integer taskId = task.getTaskId();
+                if (1 == taskId) {
+                    String varName = wfId.toString() + "_" + taskId.toString() + "_" + wfId.toString();
+                    GRBVar xVar = model.addVar(1.0, 1.0, 0.0, GRB.INTEGER, varName);
+                    xVars.put(varName, xVar);
+                    continue;
+                }
+                //普通任务在每个节点上生成一个变量
+                for (Map.Entry nodeEntry : nodes.entrySet()) {
+                    String varName = wfId.toString() + "_" + taskId.toString() + "_" + nodeEntry.getKey().toString();
+                    GRBVar xVar = model.addVar(0.0, 1.0, 0.0, GRB.INTEGER, varName);
+                    xVars.put(varName, xVar);
+                }
+            }
+        }
+        model.update();
+    }
+
+    // 变量y^{w,p}_{s,s'}，属于工作流w的任务对(s,s')是否采用路径p进行通讯；
+    // 变量的名称用"w_p_s_s'"表示；
+    private void prepareYVar() throws GRBException {
+        for (Workflow wf : workflows) {
+            Integer wfId = wf.getWF_ID();
+            ArrayList<Flow> flows = wf.getFlows();
+            for (Flow flow : flows) {
+                String currTaskId = flow.getCurrTask().getTaskId().toString();
+                String succTaskId = flow.getSuccTask().getTaskId().toString();
+                for (Map.Entry<Integer, String> pathEntry : paths.entrySet()) {
+                    String pathId = pathEntry.getKey().toString();
+                    String varName = wfId.toString() + "_" + pathId + "_" + currTaskId + "_" + succTaskId;
+                    GRBVar yVar = model.addVar(0.0, 1.0, 0.0, GRB.INTEGER, varName);
+                    yVars.put(varName, yVar);
+                }
+            }
+        }
+        model.update();
+    }
+
+
+    private void prepareOneHopLinks() {
+        String stringFromFile = Tool.getStringFromFile(LINKS_INFO_FILE);
+        String[] lines = stringFromFile.split("\r\n");
+        for (String aline : lines) {
+            if (aline.trim().equals("")) {
+                continue;
+            }
+            String[] items = aline.split("\t");
+            String oneHopLinkId = items[1] + "_" + items[3];
+            Double capacity = Double.valueOf(items[5]);
+            oneHopLinks.put(oneHopLinkId, capacity);
+        }
+    }
+
+    private void prepareNodes() {
+        String stringFromFile = Tool.getStringFromFile(NODE_INFO_FILE);
+        String[] lines = stringFromFile.split("\r\n");
+        for (String aline : lines) {
+            if (aline.trim().equals("")) {
+                continue;
+            }
+            String[] items = aline.split("\t");
+            nodes.put(Integer.valueOf(items[1]), Double.valueOf(items[3]));
+        }
+    }
+
+    private void preparePaths() {
+        String stringFromFile = Tool.getStringFromFile(PATH_INFO_FILE);
+        String[] lines = stringFromFile.split("\n");
+        int pathIdx = 1;
+        for (String aline : lines) {
+            if (aline.trim().equals("")) {
+                continue;
+            }
+            String[] items = aline.split("\t");
+            if (items[1].equals(items[3])) {
+                continue;
+            }
+            paths.put(pathIdx++, items[5]);
+        }
+    }
+
+    private void prepareWorkflows() {
+        int workflowTemplateIdx = 0;
+        WorkflowGenerator workflowGenerator = WorkflowGenerator.getWorkflowGenerator();
+        Workflow wf1 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
+        Workflow wf2 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
+        Workflow wf3 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
+        workflows.add(wf1);
+        workflows.add(wf2);
+        workflows.add(wf3);
+    }
+
+    @Test
+    public void generateWorkflowTest() {
+        GurobiSolution solution = new GurobiSolution();
+        solution.prepareWorkflows();
+        System.out.println(workflows.get(0).getTasks().size());
+        Assert.assertNotEquals(0, workflows.size());
+    }
+
+
+    @Test
+    public void preparePathsTest() {
+        GurobiSolution solution = new GurobiSolution();
+        solution.preparePaths();
+        Assert.assertNotNull(solution.paths);
+        Assert.assertNotEquals(0, solution.paths.size());
+    }
+
+    @Test
+    public void prepareNodesTest() {
+        GurobiSolution solution = new GurobiSolution();
+        solution.prepareNodes();
+        Assert.assertNotEquals(0, nodes);
+    }
+
+    @Test
+    public void prepareOneHopLinksTest() {
+        GurobiSolution solution = new GurobiSolution();
+        solution.prepareOneHopLinks();
+        Assert.assertNotEquals(0, oneHopLinks);
+    }
+
+    @Test
+    public void gurobiVarTest() {
+        try {
+            GRBEnv env = new GRBEnv("test.log");
+            GRBModel model = new GRBModel(env);
+            GRBVar x = model.addVar(1.0, 1.0, 0.0, GRB.INTEGER, "x");
+            model.update();
+            model.optimize();
+            GRBVar x1 = model.getVarByName("x");
+            System.out.println("laaaaaaaaaaa");
+            System.out.println(x.get(GRB.DoubleAttr.X));
+            Assert.assertTrue(x1 == x);
+        } catch (GRBException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Test
+    public void gurobiSolutionTest() throws GRBException {
+        GurobiSolution solution = new GurobiSolution();
+        solution.prepare();
+    }
+
+    @Test
+    public void isPathContainOneHopLinkTest() {
+        GurobiSolution solution = new GurobiSolution();
+        String pathContent = "1>2>3>4>5";
+        String oneHopLinkId = "2_3";
+        boolean result = solution.isPathContainOneHopLink(pathContent, oneHopLinkId);
+        Assert.assertTrue(result);
+
+        oneHopLinkId = "4_3";
+        result = solution.isPathContainOneHopLink(pathContent, oneHopLinkId);
+        Assert.assertTrue(result);
+
+        oneHopLinkId = "3_9";
+        result = solution.isPathContainOneHopLink(pathContent, oneHopLinkId);
+        Assert.assertFalse(result);
+    }
+
+}

@@ -1,0 +1,6 @@
+-model_ID	0	-CurrTask_ID	1	-SuccTask_ID	2
+-model_ID	0	-CurrTask_ID	1	-SuccTask_ID	3
+-model_ID	0	-CurrTask_ID	2	-SuccTask_ID	4
+-model_ID	0	-CurrTask_ID	3	-SuccTask_ID	5
+-model_ID	0	-CurrTask_ID	4	-SuccTask_ID	6
+-model_ID	0	-CurrTask_ID	5	-SuccTask_ID	6
