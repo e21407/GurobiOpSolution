@@ -13,7 +13,7 @@ import java.util.Set;
 
 public class Workflow {
 
-	private Integer WF_ID;
+	public Integer WF_ID;
 
 	/** 工作流持续的时长 */
 	private Double duration;
@@ -41,8 +41,8 @@ public class Workflow {
 	public Set<Task> getTasks(){
 		Set<Task> result = new HashSet<>();
 		for(Flow flows : flows){
-			result.add(flows.getCurrTask());
-			result.add(flows.getSuccTask());
+			result.add(flows.currTask);
+			result.add(flows.succTask);
 		}
 		return result;
 	}

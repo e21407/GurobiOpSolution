@@ -4,7 +4,6 @@ import com.sysu.lbc.dataStructure.*;
 import com.sysu.lbc.tool.Tool;
 import com.sysu.lbc.tool.WorkflowGenerator;
 import gurobi.*;
-import sun.lwawt.macosx.CSystemTray;
 
 import java.util.*;
 
@@ -17,7 +16,7 @@ public class GurobiSolution {
     List<Workflow> workflows = new ArrayList<>();
     Map<Integer, String> paths = new HashMap<>();   //<pathId, pathContent>, such as <1, 1>2>3 >
     Map<Integer, Double> nodes = new HashMap<>();  //<nodeId, nodeCapacity>
-    Map<String, Double> oneHopLinks = new HashMap<>(); //<oneHopLink, bandwidth>, such as <1_2, 50>
+    List<Link> links = new ArrayList<>();
 
     List<XVar> xVars = new ArrayList<>();    //<w_s_v, var>
     List<YVar> yVars = new ArrayList<>();    //<w_p_s_s', var>
@@ -50,17 +49,17 @@ public class GurobiSolution {
         model.optimize();
     }
 
-    private void printResult() throws GRBException {
+    public void printResult() throws GRBException {
         System.out.println("Obj is: " + model.get(GRB.DoubleAttr.ObjVal));
         System.out.println("cCost is: " + nodeLoadInfo.getValue());
         System.out.println("rCost is:" + linkLoadInfo.getValue());
         for (XVar var : xVars) {
-            if (var.xVar.get(GRB.DoubleAttr.X) > 0)
+            if (var.var.get(GRB.DoubleAttr.X) > 0)
                 System.out.println(var.getVarName());
         }
         System.out.println("==================");
         for (YVar var : yVars) {
-            if (var.yVar.get(GRB.DoubleAttr.X) > 0)
+            if (var.var.get(GRB.DoubleAttr.X) > 0)
                 System.out.println(var.getVarName());
         }
     }
@@ -86,7 +85,7 @@ public class GurobiSolution {
         for (Workflow wf : workflows) {
             ArrayList<Flow> flows = wf.getFlows();
             for (Flow f : flows) {
-                throughput += f.getNeededBandwidth();
+                throughput += f.neededBandwidth;
             }
         }
         return throughput;
@@ -94,85 +93,65 @@ public class GurobiSolution {
 
     // 检查并记录节点上的工作负载情况
     private GRBQuadExpr prepareExprNode() throws GRBException {
-        Map<String, List<CostItem>> costItems = new HashMap<>();
+        List<GRBLinExpr> loadExprOfEachNode = new ArrayList<>();
         for (Map.Entry<Integer, Double> nodeEntry : nodes.entrySet()) {
-            Integer nodeId = nodeEntry.getKey();
-            Double capacity = nodeEntry.getValue();
-            for (Map.Entry<String, GRBVar> xVarEntry : xVars.entrySet()) {
-                String[] xVarKeyItems = xVarEntry.getKey().split("_");
-                int assignNodeId = Integer.parseInt(xVarKeyItems[2]);
+            int nodeId = nodeEntry.getKey();
+            double capacity = nodeEntry.getValue();
+            GRBLinExpr nodeLoadExpr = new GRBLinExpr();
+            for (XVar x : xVars) {
+                int assignNodeId = x.nodeId;
                 if (nodeId != assignNodeId) {
                     continue;
                 }
-                int wfId = Integer.parseInt(xVarKeyItems[0]);
-                int taskId = Integer.parseInt(xVarKeyItems[1]);
-                Task task = getTaskFormWorkFlows(wfId, taskId);
-                Double neededResource = task.getNeededResource();
-                String nodeIdStr = String.valueOf(nodeId);
-                List<CostItem> nodeCostItem = costItems.get(nodeIdStr);
-                if (null == nodeCostItem) {
-                    nodeCostItem = new ArrayList<>();
-                    costItems.put(nodeIdStr, nodeCostItem);
-                }
-                nodeCostItem.add(new CostItem(xVarEntry.getValue(), neededResource, capacity));
-
+                Task task = getTaskFormWorkFlows(x.workflowId, x.taskId);
+                double neededResource = task.neededResource;
+                double coeff = -1 * neededResource / capacity;
+                nodeLoadExpr.addTerm(coeff, x.var);
             }
+            loadExprOfEachNode.add(nodeLoadExpr);
         }
-        return getSumCost(costItems);
+        return getSumCost(loadExprOfEachNode, "nodeLoad");
     }
 
 
     // 检查并记录每段one-hop link上的链路负载情况
     private GRBQuadExpr prepareExprLink() throws GRBException {
-        Map<String, List<CostItem>> costItems = new HashMap<>();
-        for (Map.Entry<String, Double> oneHopLinkEntry : oneHopLinks.entrySet()) {
-            String linkId = oneHopLinkEntry.getKey();
-            double bandwidthCapacity = oneHopLinkEntry.getValue();
-            for (Map.Entry<String, GRBVar> yVarEntry : yVars.entrySet()) {
-                String[] yVarKeyItem = yVarEntry.getKey().split("_");
-                int pathId = Integer.valueOf(yVarKeyItem[1]);
+        List<GRBLinExpr> loadExprOfEachLink = new ArrayList<>();
+        for (Link link : links) {
+            double bandwidth = link.bandwidth;
+            GRBLinExpr linkLoadExpr = new GRBLinExpr();
+            for (YVar y : yVars) {
+                int pathId = y.pathId;
                 String pathContent = paths.get(pathId);
-                if (!isPathContainOneHopLink(pathContent, linkId)) {
+                String linkKey = link.getLinkKey();
+                if (!isPathContainOneHopLink(pathContent, linkKey)) {
                     continue;
                 }
-                int wfId = Integer.parseInt(yVarKeyItem[0]);
-                int currTaskId = Integer.parseInt(yVarKeyItem[2]);
-                int succTaskId = Integer.parseInt(yVarKeyItem[3]);
-                Flow flow = getFlowFromWorkflows(wfId, currTaskId, succTaskId);
-                double neededBandwidth = flow.getNeededBandwidth();
-
-                List<CostItem> linkCostItem = costItems.get(linkId);
-                if (null == linkCostItem) {
-                    linkCostItem = new ArrayList<>();
-                    costItems.put(linkId, linkCostItem);
-                }
-                linkCostItem.add(new CostItem(yVarEntry.getValue(), neededBandwidth, bandwidthCapacity));
+                Flow flow = getFlowFromWorkflows(y.workflowId, y.currTaskId, y.succTaskId);
+                double neededBandwidth = flow.neededBandwidth;
+                double coeff = -1 * neededBandwidth / bandwidth;
+                linkLoadExpr.addTerm(coeff, y.var);
             }
+            loadExprOfEachLink.add(linkLoadExpr);
         }
-        return getSumCost(costItems);
+        return getSumCost(loadExprOfEachLink, "linkLoad");
     }
 
-    private GRBQuadExpr getSumCost(Map<String, List<CostItem>> costItems) throws GRBException {
+    private GRBQuadExpr getSumCost(List<GRBLinExpr> loadExprOfEachNode, String costPreFix) throws GRBException {
+        int nodeNum = 1;
+        List<GRBVar> nodeLoadInfo = new ArrayList<>();
+        for (GRBLinExpr nodeLoadExpr : loadExprOfEachNode) {
+            GRBVar nodeLoad = model.addVar(0.0, GRB.INFINITY, 0.0, GRB.CONTINUOUS, costPreFix + "Var" + nodeNum);
+            GRBLinExpr tempConsExpr = new GRBLinExpr();
+            tempConsExpr.addTerm(1.0, nodeLoad);
+            tempConsExpr.add(nodeLoadExpr);
+            model.addConstr(tempConsExpr, GRB.EQUAL, 0.0, costPreFix + "Constr" + nodeNum);
+            nodeLoadInfo.add(nodeLoad);
+            nodeNum++;
+        }
         GRBQuadExpr result = new GRBQuadExpr();
-        int count1 = 0;
-        for (Map.Entry<String, List<CostItem>> linkCostItems : costItems.entrySet()) {
-            count1++;
-            List<CostItem> itemList = linkCostItems.getValue();
-            int count2 = 1;
-            for (CostItem item1 : itemList) {
-                for (CostItem item2 : itemList) {
-                    double offerResource = item1.getOfferResource();
-                    double needResource1 = item1.getNeedResource();
-                    double needResource2 = item2.getNeedResource();
-                    double coeff = -1 * needResource1 * needResource2 / Math.pow(offerResource, 2);
-                    GRBVar var1 = item1.getVar();
-                    GRBVar var2 = item2.getVar();
-                    GRBQuadExpr expr = new GRBQuadExpr();
-                    expr.addTerm(coeff, var1, var2);
-                    result.add(expr);
-                    System.out.println(count1 + ": " + count2++);
-                }
-            }
+        for (GRBVar var : nodeLoadInfo) {
+            result.addTerm(-1, var, var);
         }
         return result;
     }
@@ -184,7 +163,7 @@ public class GurobiSolution {
             }
             Set<Task> tasks = wf.getTasks();
             for (Task task : tasks) {
-                if (taskId == task.getTaskId()) {
+                if (taskId == task.taskId) {
                     return task;
                 }
             }
@@ -200,7 +179,7 @@ public class GurobiSolution {
             }
             ArrayList<Flow> flows = wf.getFlows();
             for (Flow flow : flows) {
-                if (currTaskId == flow.getCurrTask().getTaskId() && succTaskId == flow.getSuccTask().getTaskId()) {
+                if (currTaskId == flow.currTask.taskId && succTaskId == flow.succTask.taskId) {
                     return flow;
                 }
             }
@@ -233,73 +212,100 @@ public class GurobiSolution {
         addLinkNodeConstraint();
     }
 
-    // todo test
     private void addLinkNodeConstraint() throws GRBException {
-        for (Map.Entry<String, GRBVar> yVarEntry : yVars.entrySet()) {
-            String[] yVarKeyItems = yVarEntry.getKey().split("_");
-            Integer pathId = Integer.valueOf(yVarKeyItems[1]);
-            String pathContent = paths.get(pathId);
+        Map<String, List<YVar>> groupYVarByPath = new HashMap<>();
+        for (YVar y : yVars) {
+            String pathContent = paths.get(y.pathId);
             String[] pathNodes = pathContent.split(">");
-            String currTaskNodeId = pathNodes[0];
-            String succTaskNodeId = pathNodes[pathNodes.length - 1];
-            String currXVarKey = yVarKeyItems[0] + "_" + yVarKeyItems[2] + "_" + currTaskNodeId;
-            String succXVarKey = yVarKeyItems[0] + "_" + yVarKeyItems[3] + "_" + succTaskNodeId;
-            GRBVar currXVar = xVars.get(currXVarKey);
-            GRBVar succXVar = xVars.get(succXVarKey);
-
-            if (null == currXVar || null == succXVar) {
-                continue;
+            int uTaskNodeId = Integer.parseInt(pathNodes[0]);
+            int vTaskNodeId = Integer.parseInt(pathNodes[pathNodes.length - 1]);
+            String groupKey = y.workflowId + "_" + y.currTaskId + "_" + y.succTaskId + "_" + uTaskNodeId + "_" + vTaskNodeId;
+            List<YVar> groupedYVars = groupYVarByPath.get(groupKey);
+            if (null == groupedYVars) {
+                groupedYVars = new ArrayList<>();
+                groupYVarByPath.put(groupKey, groupedYVars);
             }
-            GRBQuadExpr exper = new GRBQuadExpr();
-            exper.addTerm(1.0, yVarEntry.getValue());
-            exper.addTerm(-1.0, currXVar, succXVar);
-            model.addQConstr(exper, GRB.EQUAL, 0.0, yVarEntry.getKey());
+            groupedYVars.add(y);
+        }
+        for (Map.Entry<String, List<YVar>> groupedYVarEntry : groupYVarByPath.entrySet()) {
+            String[] keyItems = groupedYVarEntry.getKey().split("_");
+            int wfId = Integer.parseInt(keyItems[0]);
+            int currTaskId = Integer.parseInt(keyItems[1]);
+            int succTaskId = Integer.parseInt(keyItems[2]);
+            int uTaskNodeId = Integer.parseInt(keyItems[3]);
+            int vTaskNodeId = Integer.parseInt(keyItems[4]);
+            GRBLinExpr sumExpr1 = new GRBLinExpr();
+            GRBLinExpr sumExpr2 = new GRBLinExpr();
+            for (YVar y : groupedYVarEntry.getValue()){
+                sumExpr1.addTerm(1, y.var);
+                sumExpr2.addTerm(1, y.var);
+                XVar uXVar = null, vXVar = null;
+                for (XVar x : xVars) {
+                    if (wfId == x.workflowId && currTaskId == x.taskId && uTaskNodeId == x.nodeId) {
+                        uXVar = x;
+                    }
+                    if (wfId == x.workflowId && succTaskId == x.taskId && vTaskNodeId == x.nodeId) {
+                        vXVar = x;
+                    }
+                    if (null != uXVar && null != vXVar) {
+                        break;
+                    }
+                }
+                sumExpr1.addTerm(-1, uXVar.var);
+                model.addConstr(sumExpr1, GRB.EQUAL, 0, groupedYVarEntry.getKey() + "srcNodeConstr");
+                sumExpr2.addTerm(-1, vXVar.var);
+                model.addConstr(sumExpr2, GRB.EQUAL, 0, groupedYVarEntry.getKey() + "dstNodeConstr");
+            }
         }
     }
 
-    private void addAssignmentConstraint(Map<String, List<GRBVar>> varMap) throws GRBException {
-        Map<String, List<GRBVar>> groupedVar = varMap;
-        for (Map.Entry<String, List<GRBVar>> varsEntry : groupedVar.entrySet()) {
-            List<GRBVar> vars = varsEntry.getValue();
-            GRBLinExpr exper = new GRBLinExpr();
-            for (GRBVar var : vars) {
-                exper.addTerm(1.0, var);
+    private XVar findXVar(int wfId, int taskId, int nodeId, List<XVar> xVars) {
+        for (XVar x : xVars) {
+            if (x.workflowId == wfId && x.taskId == taskId && x.nodeId == nodeId) {
+                return x;
             }
-            model.addConstr(exper, GRB.EQUAL, 1.0, varsEntry.getKey());
+        }
+        return null;
+    }
+
+    private void addAssignmentConstraint(Map<String, List<Var>> varMap) throws GRBException {
+        Map<String, List<Var>> groupedVar = varMap;
+        for (Map.Entry<String, List<Var>> varsEntry : groupedVar.entrySet()) {
+            List<Var> vars = varsEntry.getValue();
+            GRBLinExpr expr = new GRBLinExpr();
+            for (Var var : vars) {
+                expr.addTerm(1.0, var.var);
+            }
+            model.addConstr(expr, GRB.EQUAL, 1.0, varsEntry.getKey());
         }
     }
 
     // 将变量y^{w,p}_{s,s'}按w_s_s'进行分类
-    private Map<String, List<GRBVar>> groupYVar(Map<String, GRBVar> xVars) {
-        Map<String, List<GRBVar>> result = new HashMap<>();
-        for (Map.Entry<String, GRBVar> varEntry : yVars.entrySet()) {
-            String varName = varEntry.getKey();
-            String[] s = varName.split("_");
-            String varNameIndex = s[0] + "_" + s[2] + "_" + s[3];
-            List<GRBVar> vars = result.get(varNameIndex);
+    private Map<String, List<Var>> groupYVar(List<YVar> yVars) {
+        Map<String, List<Var>> result = new HashMap<>();
+        for (YVar y : yVars) {
+            String varNameIndex = y.workflowId + "_" + y.currTaskId + "_" + y.succTaskId;
+            List<Var> vars = result.get(varNameIndex);
             if (null == vars) {
                 vars = new ArrayList<>();
                 result.put(varNameIndex, vars);
             }
-            vars.add(varEntry.getValue());
+            vars.add(y);
         }
         return result;
     }
 
     // 将变量x^w_{s,v}按w_s进行分类
-    private Map<String, List<GRBVar>> groupXVar(Map<String, GRBVar> xVars) {
-        Map<String, List<GRBVar>> result = new HashMap<>();
-        for (Map.Entry<String, GRBVar> varEntry : xVars.entrySet()) {
-            String varName = varEntry.getKey();
-            String[] s = varName.split("_");
-            String varNameIndex = s[0] + "_" + s[1];
-            List<GRBVar> vars = result.get(varNameIndex);
+    private Map<String, List<Var>> groupXVar(List<XVar> xVars) {
+        Map<String, List<Var>> result = new HashMap<>();
+        for (XVar x : xVars) {
+            String varNameIndex = x.workflowId + "_" + x.taskId;
+            List<Var> vars = result.get(varNameIndex);
             if (null == vars) {
                 vars = new ArrayList<>();
                 result.put(varNameIndex, vars);
             }
-            vars.add(varEntry.getValue());
-
+            vars.add(x);
         }
         return result;
     }
@@ -312,11 +318,12 @@ public class GurobiSolution {
             Integer wfId = wf.getWF_ID();
             Set<Task> tasks = wf.getTasks();
             for (Task task : tasks) {
-                for (Map.Entry nodeEntry : nodes.entrySet()) {
-
-                    String varName = wfId.toString() + "_" + taskId.toString() + "_" + nodeEntry.getKey().toString();
-                    GRBVar xVar = model.addVar(0.0, 1.0, 0.0, GRB.BINARY, varName);
-                    xVars.put(varName, xVar);
+                for (Map.Entry<Integer, Double> nodeEntry : nodes.entrySet()) {
+                    XVar xVar = new XVar(wfId, task.taskId, nodeEntry.getKey(), null);
+                    String varName = xVar.getVarName();
+                    GRBVar v = model.addVar(0.0, 1.0, 0.0, GRB.BINARY, varName);
+                    xVar.var = v;
+                    xVars.add(xVar);
                 }
             }
         }
@@ -330,13 +337,15 @@ public class GurobiSolution {
             Integer wfId = wf.getWF_ID();
             ArrayList<Flow> flows = wf.getFlows();
             for (Flow flow : flows) {
-                String currTaskId = flow.getCurrTask().getTaskId().toString();
-                String succTaskId = flow.getSuccTask().getTaskId().toString();
+                int currTaskId = flow.currTask.taskId;
+                int succTaskId = flow.succTask.taskId;
                 for (Map.Entry<Integer, String> pathEntry : paths.entrySet()) {
-                    String pathId = pathEntry.getKey().toString();
-                    String varName = wfId.toString() + "_" + pathId + "_" + currTaskId + "_" + succTaskId;
+                    int pathId = pathEntry.getKey();
+                    YVar y = new YVar(wfId, pathId, currTaskId, succTaskId, null);
+                    String varName = y.getVarName();
                     GRBVar yVar = model.addVar(0.0, 1.0, 0.0, GRB.BINARY, varName);
-                    yVars.put(varName, yVar);
+                    y.var = yVar;
+                    yVars.add(y);
                 }
             }
         }
@@ -352,9 +361,11 @@ public class GurobiSolution {
                 continue;
             }
             String[] items = aline.split("\t");
-            String oneHopLinkId = items[1] + "_" + items[3];
-            Double capacity = Double.valueOf(items[5]);
-            oneHopLinks.put(oneHopLinkId, capacity);
+            int u = Integer.parseInt(items[1]);
+            int v = Integer.parseInt(items[3]);
+            double capacity = Double.valueOf(items[5]);
+            Link link = new Link(u, v, capacity);
+            links.add(link);
         }
     }
 

@@ -8,5 +8,6 @@ public class Main {
         GurobiSolution solution = new GurobiSolution();
         solution.prepare();
         solution.doOptimize();
+        solution.printResult();
     }
 }

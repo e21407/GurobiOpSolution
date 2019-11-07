@@ -16,8 +16,7 @@ import java.util.*;
  */
 public class WorkflowGenerator {
     double bandwidth = 75;
-    double curTaskCap = 300;
-    double sucTaskCap = 300;
+    double taskCap = 300;
     // 单例模式
     private static WorkflowGenerator workflowGenerator = new WorkflowGenerator();
     /**
@@ -89,13 +88,13 @@ public class WorkflowGenerator {
         Set<Task> tasks = new HashSet<>();
         Vector<Flow> exampleWorkflow = exampleWorkflows.get(idx);
         for (Flow f : exampleWorkflow) {
-            Task currTask = new Task(WF_ID, f.getCurrTask().getTaskId(), curTaskCap);
+            Task currTask = new Task(WF_ID, f.currTask.taskId, taskCap);
             if (!tasks.add(currTask)) {
-                currTask = getTaskFromSet(tasks, f.getCurrTask().getTaskId());
+                currTask = getTaskFromSet(tasks, f.currTask.taskId);
             }
-            Task succTask = new Task(WF_ID, f.getSuccTask().getTaskId(), sucTaskCap);
+            Task succTask = new Task(WF_ID, f.succTask.taskId, taskCap);
             if (!tasks.add(succTask)) {
-                succTask = getTaskFromSet(tasks, f.getSuccTask().getTaskId());
+                succTask = getTaskFromSet(tasks, f.succTask.taskId);
             }
             Flow toAddFlow = new Flow(currTask, succTask, bandwidth);
             wf.addFlow(toAddFlow);
@@ -105,7 +104,7 @@ public class WorkflowGenerator {
 
     private Task getTaskFromSet(Set<Task> taskSet, Integer taskId) {
         for (Task task : taskSet) {
-            if (task.getTaskId().intValue() == taskId.intValue()) {
+            if (task.taskId == taskId) {
                 return task;
             }
         }
