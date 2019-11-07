@@ -5,6 +5,6 @@ U_ID	4	Cap	150
 U_ID	5	Cap	150
 U_ID	6	Cap	150
 U_ID	7	Cap	150
-E_ID	8	Cap	500
-E_ID	9	Cap	500
-E_ID	10	Cap	2000
+E_ID	8	Cap	150
+E_ID	9	Cap	150
+E_ID	10	Cap	150

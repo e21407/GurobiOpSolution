@@ -1,12 +1,10 @@
 package com.sysu.lbc;
 
-import com.sysu.lbc.dataStructure.CostItem;
-import com.sysu.lbc.dataStructure.Flow;
-import com.sysu.lbc.dataStructure.Task;
-import com.sysu.lbc.dataStructure.Workflow;
+import com.sysu.lbc.dataStructure.*;
 import com.sysu.lbc.tool.Tool;
 import com.sysu.lbc.tool.WorkflowGenerator;
 import gurobi.*;
+import sun.lwawt.macosx.CSystemTray;
 
 import java.util.*;
 
@@ -21,11 +19,13 @@ public class GurobiSolution {
     Map<Integer, Double> nodes = new HashMap<>();  //<nodeId, nodeCapacity>
     Map<String, Double> oneHopLinks = new HashMap<>(); //<oneHopLink, bandwidth>, such as <1_2, 50>
 
-    Map<String, GRBVar> xVars = new HashMap<>();    //<w_s_v, var>
-    Map<String, GRBVar> yVars = new HashMap<>();    //<w_p_s_s', var>
+    List<XVar> xVars = new ArrayList<>();    //<w_s_v, var>
+    List<YVar> yVars = new ArrayList<>();    //<w_p_s_s', var>
 
     GRBEnv env;
     GRBModel model;
+    GRBQuadExpr nodeLoadInfo;
+    GRBQuadExpr linkLoadInfo;
 
     public void prepare() throws GRBException {
         long starTime = System.currentTimeMillis();
@@ -50,11 +50,26 @@ public class GurobiSolution {
         model.optimize();
     }
 
+    private void printResult() throws GRBException {
+        System.out.println("Obj is: " + model.get(GRB.DoubleAttr.ObjVal));
+        System.out.println("cCost is: " + nodeLoadInfo.getValue());
+        System.out.println("rCost is:" + linkLoadInfo.getValue());
+        for (XVar var : xVars) {
+            if (var.xVar.get(GRB.DoubleAttr.X) > 0)
+                System.out.println(var.getVarName());
+        }
+        System.out.println("==================");
+        for (YVar var : yVars) {
+            if (var.yVar.get(GRB.DoubleAttr.X) > 0)
+                System.out.println(var.getVarName());
+        }
+    }
+
 
     private void setObjective() throws GRBException {
         double throughput = prepareThroughput();
-        GRBQuadExpr nodeLoadInfo = prepareExprNode();
-        GRBQuadExpr linkLoadInfo = prepareExprLink();
+        nodeLoadInfo = prepareExprNode();
+        linkLoadInfo = prepareExprLink();
         GRBQuadExpr objective = new GRBQuadExpr();
 
         objective.addConstant(throughput);
@@ -93,27 +108,16 @@ public class GurobiSolution {
                 int taskId = Integer.parseInt(xVarKeyItems[1]);
                 Task task = getTaskFormWorkFlows(wfId, taskId);
                 Double neededResource = task.getNeededResource();
-
-//                GRBLinExpr exper = new GRBLinExpr();
-//                double coeff = -1 * Math.pow(neededResource, 2) / Math.pow(capacity, 2);
-//                GRBVar xVar = xVarEntry.getValue();
-//                exper.addTerm(coeff, xVar);
-//                nodeLoad.add(exper);
                 String nodeIdStr = String.valueOf(nodeId);
-                List<CostItem> linkCostItem = costItems.get(nodeIdStr);
-                if (null == linkCostItem) {
-                    linkCostItem = new ArrayList<>();
-                    costItems.put(nodeIdStr, linkCostItem);
+                List<CostItem> nodeCostItem = costItems.get(nodeIdStr);
+                if (null == nodeCostItem) {
+                    nodeCostItem = new ArrayList<>();
+                    costItems.put(nodeIdStr, nodeCostItem);
                 }
-                linkCostItem.add(new CostItem(xVarEntry.getValue(), neededResource, capacity));
+                nodeCostItem.add(new CostItem(xVarEntry.getValue(), neededResource, capacity));
 
             }
         }
-//        GRBLinExpr result = new GRBLinExpr();
-//        for (GRBLinExpr expr : nodeLoad) {
-//            result.add(expr);
-//        }
-//        return result;
         return getSumCost(costItems);
     }
 
@@ -143,21 +147,8 @@ public class GurobiSolution {
                     costItems.put(linkId, linkCostItem);
                 }
                 linkCostItem.add(new CostItem(yVarEntry.getValue(), neededBandwidth, bandwidthCapacity));
-
-//                GRBLinExpr exper = new GRBLinExpr();
-//                double coeff = -1 * Math.pow(neededBandwidth, 2) / Math.pow(bandwidthCapacity, 2);
-//                GRBVar yVar = yVarEntry.getValue();
-//                exper.addTerm(coeff, yVar);
-//                linkLoad.add(exper);
             }
         }
-        // 计算每段link上的代价
-//        GRBLinExpr result = new GRBLinExpr();
-//        for (GRBLinExpr expr : linkLoad) {
-//            result.add(expr);
-//        }
-//        return result;
-
         return getSumCost(costItems);
     }
 
@@ -183,11 +174,6 @@ public class GurobiSolution {
                 }
             }
         }
-//        GRBQuadExpr result = new GRBQuadExpr();
-//        for (GRBQuadExpr exprItem : resultItems) {
-//            result.add(exprItem);
-//        }
-
         return result;
     }
 
@@ -326,18 +312,10 @@ public class GurobiSolution {
             Integer wfId = wf.getWF_ID();
             Set<Task> tasks = wf.getTasks();
             for (Task task : tasks) {
-                //对于起始任务分配到特殊的无人机节点上
-                Integer taskId = task.getTaskId();
-                if (1 == taskId) {
-                    String varName = wfId.toString() + "_" + taskId.toString() + "_" + wfId.toString();
-                    GRBVar xVar = model.addVar(1.0, 1.0, 0.0, GRB.INTEGER, varName);
-                    xVars.put(varName, xVar);
-                    continue;
-                }
-                //普通任务在每个节点上生成一个变量
                 for (Map.Entry nodeEntry : nodes.entrySet()) {
+
                     String varName = wfId.toString() + "_" + taskId.toString() + "_" + nodeEntry.getKey().toString();
-                    GRBVar xVar = model.addVar(0.0, 1.0, 0.0, GRB.INTEGER, varName);
+                    GRBVar xVar = model.addVar(0.0, 1.0, 0.0, GRB.BINARY, varName);
                     xVars.put(varName, xVar);
                 }
             }
@@ -357,7 +335,7 @@ public class GurobiSolution {
                 for (Map.Entry<Integer, String> pathEntry : paths.entrySet()) {
                     String pathId = pathEntry.getKey().toString();
                     String varName = wfId.toString() + "_" + pathId + "_" + currTaskId + "_" + succTaskId;
-                    GRBVar yVar = model.addVar(0.0, 1.0, 0.0, GRB.INTEGER, varName);
+                    GRBVar yVar = model.addVar(0.0, 1.0, 0.0, GRB.BINARY, varName);
                     yVars.put(varName, yVar);
                 }
             }
@@ -368,7 +346,7 @@ public class GurobiSolution {
 
     private void prepareOneHopLinks() {
         String stringFromFile = Tool.getStringFromFile(LINKS_INFO_FILE);
-        String[] lines = stringFromFile.split("\r\n");
+        String[] lines = stringFromFile.split("\n");
         for (String aline : lines) {
             if (aline.trim().equals("")) {
                 continue;
@@ -382,7 +360,7 @@ public class GurobiSolution {
 
     private void prepareNodes() {
         String stringFromFile = Tool.getStringFromFile(NODE_INFO_FILE);
-        String[] lines = stringFromFile.split("\r\n");
+        String[] lines = stringFromFile.split("\n");
         for (String aline : lines) {
             if (aline.trim().equals("")) {
                 continue;
@@ -415,7 +393,7 @@ public class GurobiSolution {
         Workflow wf2 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
         Workflow wf3 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
         workflows.add(wf1);
-        workflows.add(wf2);
+//        workflows.add(wf2);
 //        workflows.add(wf3);
     }
 }

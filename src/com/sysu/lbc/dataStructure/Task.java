@@ -1,11 +1,9 @@
 package com.sysu.lbc.dataStructure;
 
 public class Task {
-    private Integer WF_ID;
-
-    private Integer taskId;
-
-    private Double neededResource;
+    public int  workflowId;
+    public int  taskId;
+    public double neededResource;
 
     public Task(Integer WF_ID, Integer taskId, Double neededResource) {
         super();
