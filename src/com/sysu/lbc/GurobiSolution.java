@@ -207,7 +207,7 @@ public class GurobiSolution {
         // 每个任务只能放置在一个节点上
         addAssignmentConstraint(groupXVar(xVars));
         // 每个任务对只能采用一条通讯路径
-//        addAssignmentConstraint(groupYVar(yVars));
+        addAssignmentConstraint(groupYVar(yVars));
         // y^{w,p}_{s,s'} == x^w_{s,v} * x^w_{s',v}
         addLinkNodeConstraint();
     }
@@ -234,28 +234,24 @@ public class GurobiSolution {
             int succTaskId = Integer.parseInt(keyItems[2]);
             int uTaskNodeId = Integer.parseInt(keyItems[3]);
             int vTaskNodeId = Integer.parseInt(keyItems[4]);
-            GRBLinExpr sumExpr1 = new GRBLinExpr();
-            GRBLinExpr sumExpr2 = new GRBLinExpr();
+            GRBQuadExpr sumExpr1 = new GRBQuadExpr();
             for (YVar y : groupedYVarEntry.getValue()){
                 sumExpr1.addTerm(1, y.var);
-                sumExpr2.addTerm(1, y.var);
-                XVar uXVar = null, vXVar = null;
-                for (XVar x : xVars) {
-                    if (wfId == x.workflowId && currTaskId == x.taskId && uTaskNodeId == x.nodeId) {
-                        uXVar = x;
-                    }
-                    if (wfId == x.workflowId && succTaskId == x.taskId && vTaskNodeId == x.nodeId) {
-                        vXVar = x;
-                    }
-                    if (null != uXVar && null != vXVar) {
-                        break;
-                    }
-                }
-                sumExpr1.addTerm(-1, uXVar.var);
-                model.addConstr(sumExpr1, GRB.EQUAL, 0, groupedYVarEntry.getKey() + "srcNodeConstr");
-                sumExpr2.addTerm(-1, vXVar.var);
-                model.addConstr(sumExpr2, GRB.EQUAL, 0, groupedYVarEntry.getKey() + "dstNodeConstr");
             }
+            XVar uXVar = null, vXVar = null;
+            for (XVar x : xVars) {
+                if (wfId == x.workflowId && currTaskId == x.taskId && uTaskNodeId == x.nodeId) {
+                    uXVar = x;
+                }
+                if (wfId == x.workflowId && succTaskId == x.taskId && vTaskNodeId == x.nodeId) {
+                    vXVar = x;
+                }
+                if (null != uXVar && null != vXVar) {
+                    break;
+                }
+            }
+            sumExpr1.addTerm(-1, uXVar.var, vXVar.var);
+            model.addQConstr(sumExpr1, GRB.EQUAL, 0, groupedYVarEntry.getKey() + "srcNodeConstr");
         }
     }
 
@@ -404,7 +400,7 @@ public class GurobiSolution {
         Workflow wf2 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
         Workflow wf3 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
         workflows.add(wf1);
-//        workflows.add(wf2);
-//        workflows.add(wf3);
+        workflows.add(wf2);
+        workflows.add(wf3);
     }
 }
