@@ -218,7 +218,7 @@ public class GurobiSolution {
             String pathContent = paths.get(y.pathId);
             String[] pathNodes = pathContent.split(">");
             int uTaskNodeId = Integer.parseInt(pathNodes[0]);
-            int vTaskNodeId = Integer.parseInt(pathNodes[pathNodes.length - 1]);
+            int vTaskNodeId = Integer.parseInt(pathNodes[pathNodes.length - 1].trim());
             String groupKey = y.workflowId + "_" + y.currTaskId + "_" + y.succTaskId + "_" + uTaskNodeId + "_" + vTaskNodeId;
             List<YVar> groupedYVars = groupYVarByPath.get(groupKey);
             if (null == groupedYVars) {
@@ -395,12 +395,10 @@ public class GurobiSolution {
 
     private void prepareWorkflows() {
         int workflowTemplateIdx = 0;
+        int originWFNum = 6;
         WorkflowGenerator workflowGenerator = WorkflowGenerator.getWorkflowGenerator();
-        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
-        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
-        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
-        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
-        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
-        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
+        for(int i = 0; i < originWFNum; i++){
+            workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
+        }
     }
 }
