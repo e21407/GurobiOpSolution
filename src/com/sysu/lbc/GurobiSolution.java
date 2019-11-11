@@ -395,7 +395,7 @@ public class GurobiSolution {
 
     private void prepareWorkflows() {
         int workflowTemplateIdx = 0;
-        int originWFNum = 6;
+        int originWFNum = 5;
         WorkflowGenerator workflowGenerator = WorkflowGenerator.getWorkflowGenerator();
         for(int i = 0; i < originWFNum; i++){
             workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));

@@ -15,7 +15,7 @@ import java.util.*;
  * @since 2018-10-11
  */
 public class WorkflowGenerator {
-    double bandwidth = 12;
+    double bandwidth = 15;
     double taskCap = 60;
     // 单例模式
     private static WorkflowGenerator workflowGenerator = new WorkflowGenerator();
