@@ -190,11 +190,11 @@ public class GurobiSolution {
     private boolean isPathContainOneHopLink(String pathContent, String oneHopLinkKey) {
         String[] pathNodes = pathContent.split(">");
         String[] oneHopLinkNodes = oneHopLinkKey.split("_");
-        String nodeU = oneHopLinkNodes[0];
-        String nodeV = oneHopLinkNodes[1];
+        String nodeU = oneHopLinkNodes[0].trim();
+        String nodeV = oneHopLinkNodes[1].trim();
         for (int i = 0; i <= pathNodes.length - 2; i++) {
-            String pathNodeU = pathNodes[i];
-            String pathNodeV = pathNodes[i + 1];
+            String pathNodeU = pathNodes[i].trim();
+            String pathNodeV = pathNodes[i + 1].trim();
             if (nodeU.equals(pathNodeU) && nodeV.equals(pathNodeV) || nodeV.equals(pathNodeU) && nodeU.equals(pathNodeV)) {
                 return true;
             }
@@ -395,7 +395,7 @@ public class GurobiSolution {
 
     private void prepareWorkflows() {
         int workflowTemplateIdx = 0;
-        int originWFNum = 5;
+        int originWFNum = 4;
         WorkflowGenerator workflowGenerator = WorkflowGenerator.getWorkflowGenerator();
         for(int i = 0; i < originWFNum; i++){
             workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
