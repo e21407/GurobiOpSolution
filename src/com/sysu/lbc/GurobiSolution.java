@@ -396,11 +396,11 @@ public class GurobiSolution {
     private void prepareWorkflows() {
         int workflowTemplateIdx = 0;
         WorkflowGenerator workflowGenerator = WorkflowGenerator.getWorkflowGenerator();
-        Workflow wf1 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
-        Workflow wf2 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
-        Workflow wf3 = workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx);
-        workflows.add(wf1);
-        workflows.add(wf2);
-        workflows.add(wf3);
+        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
+        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
+        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
+        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
+        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
+        workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
     }
 }
