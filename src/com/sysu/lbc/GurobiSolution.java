@@ -208,6 +208,8 @@ public class GurobiSolution {
         addAssignmentConstraint(groupXVar(xVars));
         // 每个任务对只能采用一条通讯路径
         addAssignmentConstraint(groupYVar(yVars));
+        // 起始任务只能放在无人机节点上
+        fixOriginTask();
         // y^{w,p}_{s,s'} == x^w_{s,v} * x^w_{s',v}
         addLinkNodeConstraint();
     }
@@ -235,7 +237,7 @@ public class GurobiSolution {
             int uTaskNodeId = Integer.parseInt(keyItems[3]);
             int vTaskNodeId = Integer.parseInt(keyItems[4]);
             GRBQuadExpr sumExpr1 = new GRBQuadExpr();
-            for (YVar y : groupedYVarEntry.getValue()){
+            for (YVar y : groupedYVarEntry.getValue()) {
                 sumExpr1.addTerm(1, y.var);
             }
             XVar uXVar = null, vXVar = null;
@@ -393,11 +395,21 @@ public class GurobiSolution {
         }
     }
 
+    private void fixOriginTask() throws GRBException {
+        for (XVar x : xVars) {
+            if (1 == x.taskId && x.nodeId == x.workflowId) {
+                GRBLinExpr expr = new GRBLinExpr();
+                expr.addTerm(1, x.var);
+                model.addConstr(expr, GRB.EQUAL, 1.0, "fixOriginTask" + x.workflowId + "_" + x.taskId);
+            }
+        }
+    }
+
     private void prepareWorkflows() {
         int workflowTemplateIdx = 0;
         int originWFNum = 4;
         WorkflowGenerator workflowGenerator = WorkflowGenerator.getWorkflowGenerator();
-        for(int i = 0; i < originWFNum; i++){
+        for (int i = 0; i < originWFNum; i++) {
             workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
         }
     }
