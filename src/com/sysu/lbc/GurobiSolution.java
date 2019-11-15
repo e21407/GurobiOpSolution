@@ -66,16 +66,16 @@ public class GurobiSolution {
 
 
     private void setObjective() throws GRBException {
-        double throughput = prepareThroughput();
+//        double throughput = prepareThroughput();
         nodeLoadInfo = prepareExprNode();
         linkLoadInfo = prepareExprLink();
         GRBQuadExpr objective = new GRBQuadExpr();
 
-        objective.addConstant(throughput);
+//        objective.addConstant(throughput);
         objective.add(nodeLoadInfo);
         objective.add(linkLoadInfo);
 
-        model.setObjective(objective, GRB.MAXIMIZE);
+        model.setObjective(objective, GRB.MINIMIZE);
         model.update();
     }
 
@@ -105,7 +105,7 @@ public class GurobiSolution {
                 }
                 Task task = getTaskFormWorkFlows(x.workflowId, x.taskId);
                 double neededResource = task.neededResource;
-                double coeff = -1 * neededResource / capacity;
+                double coeff = neededResource / capacity;
                 nodeLoadExpr.addTerm(coeff, x.var);
             }
             loadExprOfEachNode.add(nodeLoadExpr);
@@ -129,7 +129,7 @@ public class GurobiSolution {
                 }
                 Flow flow = getFlowFromWorkflows(y.workflowId, y.currTaskId, y.succTaskId);
                 double neededBandwidth = flow.neededBandwidth;
-                double coeff = -1 * neededBandwidth / bandwidth;
+                double coeff = neededBandwidth / bandwidth;
                 linkLoadExpr.addTerm(coeff, y.var);
             }
             loadExprOfEachLink.add(linkLoadExpr);
@@ -143,7 +143,7 @@ public class GurobiSolution {
         for (GRBLinExpr nodeLoadExpr : loadExprOfEachNode) {
             GRBVar nodeLoad = model.addVar(0.0, GRB.INFINITY, 0.0, GRB.CONTINUOUS, costPreFix + "Var" + nodeNum);
             GRBLinExpr tempConsExpr = new GRBLinExpr();
-            tempConsExpr.addTerm(1.0, nodeLoad);
+            tempConsExpr.addTerm(-1.0, nodeLoad);
             tempConsExpr.add(nodeLoadExpr);
             model.addConstr(tempConsExpr, GRB.EQUAL, 0.0, costPreFix + "Constr" + nodeNum);
             nodeLoadInfo.add(nodeLoad);
@@ -151,7 +151,7 @@ public class GurobiSolution {
         }
         GRBQuadExpr result = new GRBQuadExpr();
         for (GRBVar var : nodeLoadInfo) {
-            result.addTerm(-1, var, var);
+            result.addTerm(1, var, var);
         }
         return result;
     }
@@ -407,7 +407,7 @@ public class GurobiSolution {
 
     private void prepareWorkflows() {
         int workflowTemplateIdx = 0;
-        int originWFNum = 4;
+        int originWFNum = 5;
         WorkflowGenerator workflowGenerator = WorkflowGenerator.getWorkflowGenerator();
         for (int i = 0; i < originWFNum; i++) {
             workflows.add(workflowGenerator.generateAWorkflow_V2(workflowTemplateIdx));
